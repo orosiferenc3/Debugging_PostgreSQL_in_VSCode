@@ -52,6 +52,12 @@ Once the PostgreSQL server is running, it’s ready for debugging. Run an SQL co
 ./src/bin/psql/psql -p 55432 -d postgres -c "SELECT cube_in('1,2,3');"
 ```
 
+By default, many Linux systems restrict the ability to attach debuggers to running processes for security reasons. If you try to attach VS Code (or gdb) to a PostgreSQL backend process, you might see an error like: `Superuser access is required to attach to a process.` To fix this, temporarily disable the ptrace_scope restriction by running:
+```
+echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
+```
+This command lowers the kernel’s security setting, allowing your debugger to attach to processes owned by the same user without requiring root privileges.
+
 When the code hits the inserted "breakpoint", it will print the process PID and pause execution, like this:
 ```
 Child process's pid: 76907
