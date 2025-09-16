@@ -1,4 +1,4 @@
-# Debug-PostgreSQL-in-VS-Code
+# Debugging PostgreSQL in VSCode
 
 This repository demonstrates how to debug the PostgreSQL source code, including extensions and third-party extensions.
 
