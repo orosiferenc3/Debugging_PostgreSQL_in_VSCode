@@ -45,12 +45,6 @@ function clone_mtree() {
     -e "s|set(POSTGRESQL_EXTENSION_DIR\s*\".*\")|set(POSTGRESQL_EXTENSION_DIR \"$WORKDIR/pginstall/share/extension\")|" \
     -e "s|set(POSTGRESQL_LIBRARY_DIR\s*\".*\")|set(POSTGRESQL_LIBRARY_DIR \"$WORKDIR/pginstall/lib\")|" \
     "$cmake_file"
-
-  local mtree_text_c="contrib/mtree/source/mtree_text.c"
-  if [ ! -f "$mtree_text_c" ]; then
-    error_exit "Missing source file $mtree_text_c"
-  fi
-  sed -i 's|PG_RETURN_POINTER(mtree_text_equals(first, second));|PG_RETURN_BOOL(mtree_text_equals(first, second));|' "$mtree_text_c"
 }
 
 function build_install_mtree() {

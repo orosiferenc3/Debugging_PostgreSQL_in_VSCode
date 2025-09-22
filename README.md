@@ -21,7 +21,7 @@ This causes the process to print its PID and then send itself a `SIGSTOP` signal
 
 ## Compilation and running
 
-Next, copy the `build.sh` script into the cloned PostgreSQL folder. This script configures PostgreSQL to install into a local `pginstall` directory within the source folder, avoiding the need for root permissions. By default, PostgreSQL installs files into system directories like `/usr/local/...`, which usually requires root access.
+Next, copy the `build.sh` script into the cloned PostgreSQL's root folder. This script configures PostgreSQL to install into a local `pginstall` directory within the source folder, avoiding the need for root permissions. By default, PostgreSQL installs files into system directories like `/usr/local/...`, which usually requires root access.
 
 Run this command to configure the build system and set up the local installation path:
 ```
