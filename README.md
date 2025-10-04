@@ -172,4 +172,4 @@ We performed an insertion and built the index structure using the following comm
 ```
 
 In the image below, you can see the difference in the results:
-![Image](https://github.com/user-attachments/assets/dde7b971-1b9f-411c-8611-db6c709a1037")
+![Image](https://github.com/user-attachments/assets/dde7b971-1b9f-411c-8611-db6c709a1037)
