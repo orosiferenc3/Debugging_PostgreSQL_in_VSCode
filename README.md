@@ -167,9 +167,143 @@ We performed an insertion and built the index structure using the following comm
 ./build.sh init-db
 ./build.sh run-postgres
 
-./bug_test_cube.sh first.txt
-./bug_test_cube.sh second.txt
+./bug_test_mtree.sh mtree1.txt
+./bug_test_mtree.sh mtree2.txt
+
+./bug_test_cube.sh cube1.txt
+./bug_test_cube.sh cube2.txt
 ```
 
 In the image below, you can see the difference in the results:
 ![Image](https://github.com/user-attachments/assets/dde7b971-1b9f-411c-8611-db6c709a1037)
+
+### Experimenting with btree_gist
+
+Building on our previous experiments, we wanted to investigate whether the bug also appears in other index types. Could it be related to GiST itself?
+
+To explore this, we tested another index type: btree_gist. Surprisingly, the performance (penalty) of this GiST-based index was consistent across multiple runs.
+
+The testing procedure was the same as before:
+```
+./build.sh init-db
+./build.sh run-postgres
+
+./bug_test_btree.sh btree1.txt
+./bug_test_btree.sh btree2.txt
+```
+
+## Investigating the Call Stack
+
+With this information in hand, we proceeded to investigate the call stack. Fortunately, VS Code makes it easy to view the call stack. Let’s take a look at it.
+
+M-tree call stack:
+```
+libc.so.6!__pthread_kill_implementation(pthread_t threadid, int signo, int no_tid) (pthread_kill.c:44)
+libc.so.6!__pthread_kill_internal(pthread_t threadid, int signo) (pthread_kill.c:89)
+libc.so.6!__GI___pthread_kill(pthread_t threadid, int signo, int signo@entry) (pthread_kill.c:100)
+libc.so.6!__GI_raise(int sig) (raise.c:26)
+mtree_gist.so!mtree_float_array_penalty(FunctionCallInfo fcinfo) (./contrib/mtree/source/mtree_float_array.c:262)
+FunctionCall3Coll(FmgrInfo * flinfo, Oid collation, Datum arg1, Datum arg2, Datum arg3) (./src/backend/utils/fmgr/fmgr.c:1186)
+gistpenalty(GISTSTATE * giststate, int attno, GISTENTRY * orig, _Bool isNullOrig, GISTENTRY * add, _Bool isNullAdd) (./src/backend/access/gist/gistutil.c:733)
+gistchoose(Relation r, Page p, IndexTuple it, GISTSTATE * giststate) (./src/backend/access/gist/gistutil.c:458)
+gistdoinsert(Relation r, IndexTuple itup, Size freespace, GISTSTATE * giststate, Relation heapRel, _Bool is_build) (./src/backend/access/gist/gist.c:755)
+gistBuildCallback(Relation index, ItemPointer tid, Datum * values, _Bool * isnull, _Bool tupleIsAlive, void * state) (./src/backend/access/gist/gistbuild.c:865)
+heapam_index_build_range_scan(Relation heapRelation, Relation indexRelation, IndexInfo * indexInfo, _Bool allow_sync, _Bool anyvisible, _Bool progress, BlockNumber start_blockno, BlockNumber numblocks, IndexBuildCallback callback, void * callback_state, TableScanDesc scan) (./src/backend/access/heap/heapam_handler.c:1705)
+table_index_build_scan(Relation table_rel, Relation index_rel, struct IndexInfo * index_info, _Bool allow_sync, _Bool progress, IndexBuildCallback callback, void * callback_state, TableScanDesc scan) (./src/include/access/tableam.h:1751)
+gistbuild(Relation heap, Relation index, IndexInfo * indexInfo) (./src/backend/access/gist/gistbuild.c:313)
+index_build(Relation heapRelation, Relation indexRelation, IndexInfo * indexInfo, _Bool isreindex, _Bool parallel) (./src/backend/catalog/index.c:3078)
+index_create(Relation heapRelation, const char * indexRelationName, Oid indexRelationId, Oid parentIndexRelid, Oid parentConstraintId, RelFileNumber relFileNumber, IndexInfo * indexInfo, const List * indexColNames, Oid accessMethodId, Oid tableSpaceId, const Oid * collationIds, const Oid * opclassIds, const Datum * opclassOptions, const int16 * coloptions, const NullableDatum * stattargets, Datum reloptions, bits16 flags, bits16 constr_flags, _Bool allow_system_table_mods, _Bool is_internal, Oid * constraintId) (./src/backend/catalog/index.c:1278)
+DefineIndex(Oid tableId, IndexStmt * stmt, Oid indexRelationId, Oid parentIndexId, Oid parentConstraintId, int total_parts, _Bool is_alter_table, _Bool check_rights, _Bool check_not_in_use, _Bool skip_build, _Bool quiet) (./src/backend/commands/indexcmds.c:1245)
+ProcessUtilitySlow(ParseState * pstate, PlannedStmt * pstmt, const char * queryString, ProcessUtilityContext context, ParamListInfo params, QueryEnvironment * queryEnv, DestReceiver * dest, QueryCompletion * qc) (./src/backend/tcop/utility.c:1536)
+standard_ProcessUtility(PlannedStmt * pstmt, const char * queryString, _Bool readOnlyTree, ProcessUtilityContext context, ParamListInfo params, QueryEnvironment * queryEnv, DestReceiver * dest, QueryCompletion * qc) (./src/backend/tcop/utility.c:1060)
+ProcessUtility(PlannedStmt * pstmt, const char * queryString, _Bool readOnlyTree, ProcessUtilityContext context, ParamListInfo params, QueryEnvironment * queryEnv, DestReceiver * dest, QueryCompletion * qc) (./src/backend/tcop/utility.c:523)
+PortalRunUtility(Portal portal, PlannedStmt * pstmt, _Bool isTopLevel, _Bool setHoldSnapshot, DestReceiver * dest, QueryCompletion * qc) (./src/backend/tcop/pquery.c:1153)
+PortalRunMulti(Portal portal, _Bool isTopLevel, _Bool setHoldSnapshot, DestReceiver * dest, DestReceiver * altdest, QueryCompletion * qc) (./src/backend/tcop/pquery.c:1310)
+PortalRun(Portal portal, long count, _Bool isTopLevel, DestReceiver * dest, DestReceiver * altdest, QueryCompletion * qc) (./src/backend/tcop/pquery.c:788)
+exec_simple_query(const char * query_string) (./src/backend/tcop/postgres.c:1278)
+PostgresMain(const char * dbname, const char * username) (./src/backend/tcop/postgres.c:4774)
+BackendMain(const void * startup_data, size_t startup_data_len) (./src/backend/tcop/backend_startup.c:124)
+postmaster_child_launch(BackendType child_type, int child_slot, const void * startup_data, size_t startup_data_len, ClientSocket * client_sock) (./src/backend/postmaster/launch_backend.c:292)
+BackendStartup(ClientSocket * client_sock) (./src/backend/postmaster/postmaster.c:3590)
+ServerLoop() (./src/backend/postmaster/postmaster.c:1705)
+PostmasterMain(int argc, char ** argv) (./src/backend/postmaster/postmaster.c:1403)
+main(int argc, char ** argv) (./src/backend/main/main.c:231)
+```
+
+Cube call stack:
+```
+libc.so.6!__pthread_kill_implementation(pthread_t threadid, int signo, int no_tid) (pthread_kill.c:44)
+libc.so.6!__pthread_kill_internal(pthread_t threadid, int signo) (pthread_kill.c:89)
+libc.so.6!__GI___pthread_kill(pthread_t threadid, int signo, int signo@entry) (pthread_kill.c:100)
+libc.so.6!__GI_raise(int sig) (raise.c:26)
+cube.so!g_cube_penalty(FunctionCallInfo fcinfo) (./contrib/cube/cube.c:510)
+FunctionCall3Coll(FmgrInfo * flinfo, Oid collation, Datum arg1, Datum arg2, Datum arg3) (./src/backend/utils/fmgr/fmgr.c:1186)
+gistpenalty(GISTSTATE * giststate, int attno, GISTENTRY * orig, _Bool isNullOrig, GISTENTRY * add, _Bool isNullAdd) (./src/backend/access/gist/gistutil.c:733)
+gistchoose(Relation r, Page p, IndexTuple it, GISTSTATE * giststate) (./src/backend/access/gist/gistutil.c:458)
+gistdoinsert(Relation r, IndexTuple itup, Size freespace, GISTSTATE * giststate, Relation heapRel, _Bool is_build) (./src/backend/access/gist/gist.c:755)
+gistBuildCallback(Relation index, ItemPointer tid, Datum * values, _Bool * isnull, _Bool tupleIsAlive, void * state) (./src/backend/access/gist/gistbuild.c:865)
+heapam_index_build_range_scan(Relation heapRelation, Relation indexRelation, IndexInfo * indexInfo, _Bool allow_sync, _Bool anyvisible, _Bool progress, BlockNumber start_blockno, BlockNumber numblocks, IndexBuildCallback callback, void * callback_state, TableScanDesc scan) (./src/backend/access/heap/heapam_handler.c:1705)
+table_index_build_scan(Relation table_rel, Relation index_rel, struct IndexInfo * index_info, _Bool allow_sync, _Bool progress, IndexBuildCallback callback, void * callback_state, TableScanDesc scan) (./src/include/access/tableam.h:1751)
+gistbuild(Relation heap, Relation index, IndexInfo * indexInfo) (./src/backend/access/gist/gistbuild.c:313)
+index_build(Relation heapRelation, Relation indexRelation, IndexInfo * indexInfo, _Bool isreindex, _Bool parallel) (./src/backend/catalog/index.c:3078)
+index_create(Relation heapRelation, const char * indexRelationName, Oid indexRelationId, Oid parentIndexRelid, Oid parentConstraintId, RelFileNumber relFileNumber, IndexInfo * indexInfo, const List * indexColNames, Oid accessMethodId, Oid tableSpaceId, const Oid * collationIds, const Oid * opclassIds, const Datum * opclassOptions, const int16 * coloptions, const NullableDatum * stattargets, Datum reloptions, bits16 flags, bits16 constr_flags, _Bool allow_system_table_mods, _Bool is_internal, Oid * constraintId) (./src/backend/catalog/index.c:1278)
+DefineIndex(Oid tableId, IndexStmt * stmt, Oid indexRelationId, Oid parentIndexId, Oid parentConstraintId, int total_parts, _Bool is_alter_table, _Bool check_rights, _Bool check_not_in_use, _Bool skip_build, _Bool quiet) (./src/backend/commands/indexcmds.c:1245)
+ProcessUtilitySlow(ParseState * pstate, PlannedStmt * pstmt, const char * queryString, ProcessUtilityContext context, ParamListInfo params, QueryEnvironment * queryEnv, DestReceiver * dest, QueryCompletion * qc) (./src/backend/tcop/utility.c:1536)
+standard_ProcessUtility(PlannedStmt * pstmt, const char * queryString, _Bool readOnlyTree, ProcessUtilityContext context, ParamListInfo params, QueryEnvironment * queryEnv, DestReceiver * dest, QueryCompletion * qc) (./src/backend/tcop/utility.c:1060)
+ProcessUtility(PlannedStmt * pstmt, const char * queryString, _Bool readOnlyTree, ProcessUtilityContext context, ParamListInfo params, QueryEnvironment * queryEnv, DestReceiver * dest, QueryCompletion * qc) (./src/backend/tcop/utility.c:523)
+PortalRunUtility(Portal portal, PlannedStmt * pstmt, _Bool isTopLevel, _Bool setHoldSnapshot, DestReceiver * dest, QueryCompletion * qc) (./src/backend/tcop/pquery.c:1153)
+PortalRunMulti(Portal portal, _Bool isTopLevel, _Bool setHoldSnapshot, DestReceiver * dest, DestReceiver * altdest, QueryCompletion * qc) (./src/backend/tcop/pquery.c:1310)
+PortalRun(Portal portal, long count, _Bool isTopLevel, DestReceiver * dest, DestReceiver * altdest, QueryCompletion * qc) (./src/backend/tcop/pquery.c:788)
+exec_simple_query(const char * query_string) (./src/backend/tcop/postgres.c:1278)
+PostgresMain(const char * dbname, const char * username) (./src/backend/tcop/postgres.c:4774)
+BackendMain(const void * startup_data, size_t startup_data_len) (./src/backend/tcop/backend_startup.c:124)
+postmaster_child_launch(BackendType child_type, int child_slot, const void * startup_data, size_t startup_data_len, ClientSocket * client_sock) (./src/backend/postmaster/launch_backend.c:292)
+BackendStartup(ClientSocket * client_sock) (./src/backend/postmaster/postmaster.c:3590)
+ServerLoop() (./src/backend/postmaster/postmaster.c:1705)
+PostmasterMain(int argc, char ** argv) (./src/backend/postmaster/postmaster.c:1403)
+main(int argc, char ** argv) (./src/backend/main/main.c:231)
+```
+
+B-tree call stack:
+```
+libc.so.6!__pthread_kill_implementation(pthread_t threadid, int signo, int no_tid) (pthread_kill.c:44)
+libc.so.6!__pthread_kill_internal(pthread_t threadid, int signo) (pthread_kill.c:89)
+libc.so.6!__GI___pthread_kill(pthread_t threadid, int signo, int signo@entry) (pthread_kill.c:100)
+libc.so.6!__GI_raise(int sig) (raise.c:26)
+btree_gist.so!gbt_float8_penalty(FunctionCallInfo fcinfo) (./contrib/btree_gist/btree_float8.c:201)
+FunctionCall3Coll(FmgrInfo * flinfo, Oid collation, Datum arg1, Datum arg2, Datum arg3) (./src/backend/utils/fmgr/fmgr.c:1186)
+gistpenalty(GISTSTATE * giststate, int attno, GISTENTRY * orig, _Bool isNullOrig, GISTENTRY * add, _Bool isNullAdd) (./src/backend/access/gist/gistutil.c:733)
+findDontCares(Relation r, GISTSTATE * giststate, GISTENTRY * valvec, GistSplitVector * spl, int attno) (./src/backend/access/gist/gistsplit.c:132)
+gistUserPicksplit(Relation r, GistEntryVector * entryvec, int attno, GistSplitVector * v, IndexTuple * itup, int len, GISTSTATE * giststate) (./src/backend/access/gist/gistsplit.c:506)
+gistSplitByKey(Relation r, Page page, IndexTuple * itup, int len, GISTSTATE * giststate, GistSplitVector * v, int attno) (./src/backend/access/gist/gistsplit.c:697)
+gistSplit(Relation r, Page page, IndexTuple * itup, int len, GISTSTATE * giststate) (./src/backend/access/gist/gist.c:1483)
+gist_indexsortbuild_levelstate_flush(GISTBuildState * state, GistSortedBuildLevelState * levelstate) (./src/backend/access/gist/gistbuild.c:524)
+gist_indexsortbuild_levelstate_add(GISTBuildState * state, GistSortedBuildLevelState * levelstate, IndexTuple itup) (./src/backend/access/gist/gistbuild.c:477)
+gist_indexsortbuild(GISTBuildState * state) (./src/backend/access/gist/gistbuild.c:422)
+gistbuild(Relation heap, Relation index, IndexInfo * indexInfo) (./src/backend/access/gist/gistbuild.c:283)
+index_build(Relation heapRelation, Relation indexRelation, IndexInfo * indexInfo, _Bool isreindex, _Bool parallel) (./src/backend/catalog/index.c:3078)
+index_create(Relation heapRelation, const char * indexRelationName, Oid indexRelationId, Oid parentIndexRelid, Oid parentConstraintId, RelFileNumber relFileNumber, IndexInfo * indexInfo, const List * indexColNames, Oid accessMethodId, Oid tableSpaceId, const Oid * collationIds, const Oid * opclassIds, const Datum * opclassOptions, const int16 * coloptions, const NullableDatum * stattargets, Datum reloptions, bits16 flags, bits16 constr_flags, _Bool allow_system_table_mods, _Bool is_internal, Oid * constraintId) (./src/backend/catalog/index.c:1278)
+DefineIndex(Oid tableId, IndexStmt * stmt, Oid indexRelationId, Oid parentIndexId, Oid parentConstraintId, int total_parts, _Bool is_alter_table, _Bool check_rights, _Bool check_not_in_use, _Bool skip_build, _Bool quiet) (./src/backend/commands/indexcmds.c:1245)
+ProcessUtilitySlow(ParseState * pstate, PlannedStmt * pstmt, const char * queryString, ProcessUtilityContext context, ParamListInfo params, QueryEnvironment * queryEnv, DestReceiver * dest, QueryCompletion * qc) (./src/backend/tcop/utility.c:1536)
+standard_ProcessUtility(PlannedStmt * pstmt, const char * queryString, _Bool readOnlyTree, ProcessUtilityContext context, ParamListInfo params, QueryEnvironment * queryEnv, DestReceiver * dest, QueryCompletion * qc) (./src/backend/tcop/utility.c:1060)
+ProcessUtility(PlannedStmt * pstmt, const char * queryString, _Bool readOnlyTree, ProcessUtilityContext context, ParamListInfo params, QueryEnvironment * queryEnv, DestReceiver * dest, QueryCompletion * qc) (./src/backend/tcop/utility.c:523)
+PortalRunUtility(Portal portal, PlannedStmt * pstmt, _Bool isTopLevel, _Bool setHoldSnapshot, DestReceiver * dest, QueryCompletion * qc) (./src/backend/tcop/pquery.c:1153)
+PortalRunMulti(Portal portal, _Bool isTopLevel, _Bool setHoldSnapshot, DestReceiver * dest, DestReceiver * altdest, QueryCompletion * qc) (./src/backend/tcop/pquery.c:1310)
+PortalRun(Portal portal, long count, _Bool isTopLevel, DestReceiver * dest, DestReceiver * altdest, QueryCompletion * qc) (./src/backend/tcop/pquery.c:788)
+exec_simple_query(const char * query_string) (./src/backend/tcop/postgres.c:1278)
+PostgresMain(const char * dbname, const char * username) (./src/backend/tcop/postgres.c:4774)
+BackendMain(const void * startup_data, size_t startup_data_len) (./src/backend/tcop/backend_startup.c:124)
+postmaster_child_launch(BackendType child_type, int child_slot, const void * startup_data, size_t startup_data_len, ClientSocket * client_sock) (./src/backend/postmaster/launch_backend.c:292)
+BackendStartup(ClientSocket * client_sock) (./src/backend/postmaster/postmaster.c:3590)
+ServerLoop() (./src/backend/postmaster/postmaster.c:1705)
+PostmasterMain(int argc, char ** argv) (./src/backend/postmaster/postmaster.c:1403)
+main(int argc, char ** argv) (./src/backend/main/main.c:231)
+```
+
+Looking at the differences, we can see that the M-tree and the Cube share the same call stack. In contrast, the B-tree exhibits a slightly different call stack.
+
+Cube vs M-tree differences:
+![Image](https://github.com/user-attachments/assets/8bd9440f-c103-43ad-907d-e494f5d924b7)
+
+B-tree vs Cube differences:
+![Image](https://github.com/user-attachments/assets/3ad4d5d7-150f-4801-ac78-67668683ba37)
