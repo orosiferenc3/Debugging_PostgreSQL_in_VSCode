@@ -106,3 +106,70 @@ Finally, run the extension with these commands:
 ./src/bin/psql/psql -p 55432 -d postgres -c "CREATE EXTENSION IF NOT EXISTS mtree_gist;"
 ./src/bin/psql/psql -p 55432 -d postgres -c "SELECT mtree_float_array_input('1,2,3');"
 ```
+
+## Purpose of the debugging
+
+We noticed that when we print certain values in the M-Tree and run it again, we get completely different results. At first, we suspected that there might be an issue with the M-Tree code itself, but after reviewing it multiple times, we ruled that out. Still, we were curious whether PostgreSQL might be causing this behavior. To verify this, we printed some values in the Cube module—and to our surprise, we observed the same behavior there as well.
+
+Below, you can see the command that reproduces the issue we encountered.
+
+We added print statements in the Cube’s penalty function, so the function looked like this:
+```c
+Datum g_cube_penalty(PG_FUNCTION_ARGS)
+{
+	GISTENTRY  *origentry = (GISTENTRY *) PG_GETARG_POINTER(0);
+	GISTENTRY  *newentry = (GISTENTRY *) PG_GETARG_POINTER(1);
+	float	   *result = (float *) PG_GETARG_POINTER(2);
+	NDBOX      *orig      = DatumGetNDBOXP(origentry->key);
+	NDBOX      *newc      = DatumGetNDBOXP(newentry->key);
+	NDBOX	   *ud;
+	double		tmp1,
+				tmp2;
+
+	ud = cube_union_v0(DatumGetNDBOXP(origentry->key),
+					   DatumGetNDBOXP(newentry->key));
+	rt_cube_size(ud, &tmp1);
+	rt_cube_size(DatumGetNDBOXP(origentry->key), &tmp2);
+	*result = (float) (tmp1 - tmp2);
+	
+	/* Extract dimension and point flag */
+	int orig_dim = (int)(orig->header & 0xFF);
+	bool orig_point = ((orig->header >> 31) & 1);
+	int new_dim = (int)(newc->header & 0xFF);
+	bool new_point = ((newc->header >> 31) & 1);
+
+	elog(INFO, "Penalty: orig dim=%d point=%d, new dim=%d point=%d, result=%f (%p)",
+		orig_dim, orig_point, new_dim, new_point, *result, result);
+
+	/* Print all coords of orig */
+	for (int i = 0; i < orig_dim; i++)
+	{
+		double lo = orig->x[i];
+		double hi = orig_point ? lo : orig->x[i + orig_dim];
+		elog(INFO, "  orig[%d]: lo=%f hi=%f", i, lo, hi);
+	}
+
+	/* Print all coords of newc */
+	for (int i = 0; i < new_dim; i++)
+	{
+		double lo = newc->x[i];
+		double hi = new_point ? lo : newc->x[i + new_dim];
+		elog(INFO, "  new[%d]: lo=%f hi=%f", i, lo, hi);
+	}
+	elog(INFO, "-----------------------------------------");
+
+	PG_RETURN_FLOAT8(*result);
+}
+```
+
+We performed an insertion and built the index structure using the following commands:
+```
+./build.sh init-db
+./build.sh run-postgres
+
+./bug_test_cube.sh first.txt
+./bug_test_cube.sh second.txt
+```
+
+In the image below, you can see the difference in the results:
+![Image](https://github.com/user-attachments/assets/dde7b971-1b9f-411c-8611-db6c709a1037")
