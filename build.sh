@@ -3,7 +3,7 @@ set -euo pipefail
 
 WORKDIR="$(cd "$(dirname "$0")" && pwd)"
 PG_SRC="$WORKDIR"
-PG_BIN="$PG_SRC/src/backend/postgres"
+PG_BIN="$PG_SRC/pginstall/bin/postgres"
 PG_DATA="/tmp/pgdebug_data"
 PG_PORT=55432
 
@@ -16,7 +16,7 @@ function configure_postgres() {
   echo "⚙️ Configuring PostgreSQL..."
   cd "$PG_SRC"
   mkdir -p pginstall
-  ./configure --enable-debug CFLAGS=-g --prefix="$(pwd)/pginstall"
+  ./configure --enable-debug CFLAGS=-g --with-blocksize=32 --prefix="$(pwd)/pginstall"
   echo "✅ Configuration completed."
 }
 
@@ -66,7 +66,7 @@ function init_database() {
     rm -rf "$PG_DATA"
   fi
 
-  ./src/bin/initdb/initdb -D "$PG_DATA" --encoding=UTF8 --auth=trust
+  $(pwd)/pginstall/bin/initdb -D "$PG_DATA" --encoding=UTF8 --auth=trust
   echo "✅ Database initialized."
 }
 
